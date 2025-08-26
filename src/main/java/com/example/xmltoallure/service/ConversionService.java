@@ -73,7 +73,8 @@ public class ConversionService {
 
         // --- Pass 2: Build TestCase ---
         List<Labels> labels = createLabels(fileName, epic, feature, story);
-        List<TestStep> steps = new ArrayList<>();
+        List<TestStep> regularSteps = new ArrayList<>();
+        List<TestStep> mockSubSteps = new ArrayList<>();
         String pendingDateTime = null;
         String pendingRequestData = null;
 
@@ -96,24 +97,32 @@ public class ConversionService {
                 }
 
                 if ("mockData".equals(tagName)) {
-                    steps.add(parseMockDataStep(element));
-                    pendingDateTime = null;
-                    pendingRequestData = null;
+                    mockSubSteps.add(parseSingleMockSubStep(element));
                 } else if ("request".equals(tagName)) {
-                    i = parseRequestStep(steps, allNodes, i, pendingDateTime, null);
+                    i = parseRequestStep(regularSteps, allNodes, i, pendingDateTime, null);
                     pendingDateTime = null;
                     pendingRequestData = null;
                 } else if ("q".equals(tagName)) {
-                    i = parseQStep(steps, allNodes, i, pendingDateTime, pendingRequestData);
+                    i = parseQStep(regularSteps, allNodes, i, pendingDateTime, pendingRequestData);
                     pendingDateTime = null;
                     pendingRequestData = null;
                 } else if ("event".equals(tagName)) {
-                    i = parseEventStep(steps, allNodes, i, pendingDateTime, pendingRequestData);
+                    i = parseEventStep(regularSteps, allNodes, i, pendingDateTime, pendingRequestData);
                     pendingDateTime = null;
                     pendingRequestData = null;
                 }
             }
         }
+
+        List<TestStep> finalSteps = new ArrayList<>();
+        if (!mockSubSteps.isEmpty()) {
+            finalSteps.add(TestStep.builder()
+                .name("Создать моки")
+                .status("passed")
+                .steps(mockSubSteps)
+                .build());
+        }
+        finalSteps.addAll(regularSteps);
 
         return TestCase.builder()
                 .name(testCaseName)
@@ -121,7 +130,7 @@ public class ConversionService {
                 .description(description)
                 .status("passed")
                 .labels(labels)
-                .steps(steps)
+                .steps(finalSteps)
                 .build();
     }
 
@@ -148,8 +157,7 @@ public class ConversionService {
         return builder.parse(is);
     }
 
-    private TestStep parseMockDataStep(Element mockDataElement) {
-        List<TestStep> mockSubSteps = new ArrayList<>();
+    private TestStep parseSingleMockSubStep(Element mockDataElement) {
         Element queryElement = (Element) mockDataElement.getElementsByTagName("query").item(0);
         Element responseElement = (Element) mockDataElement.getElementsByTagName("response").item(0);
         Element paramsElement = (Element) mockDataElement.getElementsByTagName("parameters").item(0);
@@ -164,17 +172,10 @@ public class ConversionService {
         parameters.add(Parameter.builder().name("Status").value(responseElement.getAttribute("status")).build());
         parameters.add(Parameter.builder().name("Body").value(StringEscapeUtils.escapeJson(responseElement.getTextContent().trim())).build());
 
-        TestStep mockStep = TestStep.builder()
+        return TestStep.builder()
                 .name(methodName)
                 .status("passed")
                 .parameters(parameters)
-                .build();
-        mockSubSteps.add(mockStep);
-
-        return TestStep.builder()
-                .name("Создать моки")
-                .status("passed")
-                .steps(mockSubSteps)
                 .build();
     }
 

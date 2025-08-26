@@ -17,7 +17,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -74,10 +76,15 @@ public class ConversionController {
     private byte[] createZipArchive(List<TestCase> testCases) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            Map<String, Integer> fileNameCounts = new HashMap<>();
             for (TestCase testCase : testCases) {
-                // Sanitize the test case name for use as a filename
-                String sanitizedName = testCase.getName().replaceAll("[^a-zA-Z0-9\\.\\-]", "_");
-                String entryName = sanitizedName + "-result.json";
+                String baseName = testCase.getName().replaceAll("[^a-zA-Z0-9\\.\\-]", "_");
+                
+                int count = fileNameCounts.getOrDefault(baseName, 0);
+                String finalName = (count == 0) ? baseName : baseName + "-" + count;
+                fileNameCounts.put(baseName, count + 1);
+
+                String entryName = finalName + "-result.json";
                 
                 ZipEntry entry = new ZipEntry(entryName);
                 zos.putNextEntry(entry);
