@@ -24,6 +24,22 @@ import java.util.regex.Pattern;
 @Service
 public class ConversionService {
 
+    /**
+ * Сервис для конвертации XML в объекты TestCase.
+ */
+@Service
+public class ConversionService {
+
+    /**
+     * Конвертирует содержимое XML в список объектов TestCase.
+     * @param xmlContent Содержимое XML файла.
+     * @param fileName Имя файла.
+     * @param epic Epic для Allure отчета.
+     * @param feature Feature для Allure отчета.
+     * @param story Story для Allure отчета.
+     * @return Список объектов TestCase.
+     * @throws Exception Если произошла ошибка при парсинге XML.
+     */
     public List<TestCase> convert(String xmlContent, String fileName, String epic, String feature, String story) throws Exception {
         Document doc = loadXMLFromString(xmlContent);
         doc.getDocumentElement().normalize();
@@ -40,6 +56,111 @@ public class ConversionService {
         }
         return testCases;
     }
+
+    /**
+     * Парсит элемент test-case и создает объект TestCase.
+     * @param testCaseElement Элемент test-case.
+     * @param fileName Имя файла.
+     * @param epic Epic для Allure отчета.
+     * @param feature Feature для Allure отчета.
+     * @param story Story для Allure отчета.
+     * @return Объект TestCase.
+     */
+    private TestCase parseTestCase(Element testCaseElement, String fileName, String epic, String feature, String story) {
+        String testCaseName = testCaseElement.getAttribute("id");
+
+        // --- Pass 1: Analyze dateTime structure for this specific test case ---
+        int dateTimeCount = 0;
+        int firstDateTimeIndex = -1;
+        int firstRequestIndex = -1;
+        NodeList allNodes = testCaseElement.getChildNodes();
+        for (int i = 0; i < allNodes.getLength(); i++) {
+            Node node = allNodes.item(i);
+            if (node.getNodeType() == Node.ELEMENT_NODE) {
+                String tagName = ((Element) node).getTagName();
+                if ("dateTime".equals(tagName)) {
+                    dateTimeCount++;
+                    if (firstDateTimeIndex == -1) {
+                        firstDateTimeIndex = i;
+                    }
+                }
+                if (firstRequestIndex == -1 && ("request".equals(tagName) || "q".equals(tagName) || "event".equals(tagName))) {
+                    firstRequestIndex = i;
+                }
+            }
+        }
+
+        boolean singleDateTimeAtStart = dateTimeCount == 1 && (firstRequestIndex == -1 || firstDateTimeIndex < firstRequestIndex);
+        String description = "";
+        if (singleDateTimeAtStart) {
+            description = "Установить дату и время\n" + ((Element) allNodes.item(firstDateTimeIndex)).getTextContent().trim();
+        }
+
+        // --- Pass 2: Build TestCase ---
+        List<Labels> labels = createLabels(fileName, epic, feature, story);
+        List<TestStep> regularSteps = new ArrayList<>();
+        List<TestStep> mockSubSteps = new ArrayList<>();
+        String pendingDateTime = null;
+        String pendingRequestData = null;
+
+        for (int i = 0; i < allNodes.getLength(); i++) {
+            Node node = allNodes.item(i);
+            if (node.getNodeType() == Node.ELEMENT_NODE) {
+                Element element = (Element) node;
+                String tagName = element.getTagName();
+
+                if ("dateTime".equals(tagName)) {
+                    if (!singleDateTimeAtStart) {
+                        pendingDateTime = element.getTextContent().trim();
+                    }
+                    continue;
+                }
+                
+                if ("requestData".equals(tagName)) {
+                    pendingRequestData = element.getTextContent().trim();
+                    continue;
+                }
+
+                if ("mockData".equals(tagName)) {
+                    mockSubSteps.add(parseSingleMockSubStep(element));
+                } else if ("request".equals(tagName)) {
+                    i = parseRequestStep(regularSteps, allNodes, i, pendingDateTime, null);
+                    pendingDateTime = null;
+                    pendingRequestData = null;
+                } else if ("q".equals(tagName)) {
+                    i = parseQStep(regularSteps, allNodes, i, pendingDateTime, pendingRequestData);
+                    pendingDateTime = null;
+                    pendingRequestData = null;
+                } else if ("event".equals(tagName)) {
+                    i = parseEventStep(regularSteps, allNodes, i, pendingDateTime, pendingRequestData);
+                    pendingDateTime = null;
+                    pendingRequestData = null;
+                }
+            }
+        }
+
+        List<TestStep> finalSteps = new ArrayList<>();
+        if (!mockSubSteps.isEmpty()) {
+            finalSteps.add(TestStep.builder()
+                .name("Создать моки")
+                .status("passed")
+                .steps(mockSubSteps)
+                .build());
+        }
+        finalSteps.addAll(regularSteps);
+
+        return TestCase.builder()
+                .name(testCaseName)
+                .fullName(testCaseName)
+                .description(description)
+                .status("passed")
+                .labels(labels)
+                .steps(finalSteps)
+                .build();
+    }
+
+    // ... (rest of the methods remain unchanged)
+}
 
     private TestCase parseTestCase(Element testCaseElement, String fileName, String epic, String feature, String story) {
         String testCaseName = testCaseElement.getAttribute("id");
@@ -134,6 +255,14 @@ public class ConversionService {
                 .build();
     }
 
+    /**
+     * Создает список меток для Allure отчета.
+     * @param fileName Имя файла.
+     * @param epic Epic для Allure отчета.
+     * @param feature Feature для Allure отчета.
+     * @param story Story для Allure отчета.
+     * @return Список меток.
+     */
     private List<Labels> createLabels(String fileName, String epic, String feature, String story) {
         List<Labels> labels = new ArrayList<>();
         if (epic != null && !epic.isEmpty()) {
@@ -150,6 +279,12 @@ public class ConversionService {
         return labels;
     }
 
+    /**
+     * Загружает XML из строки.
+     * @param xml Строка с XML.
+     * @return Объект Document.
+     * @throws Exception Если произошла ошибка при парсинге.
+     */
     private Document loadXMLFromString(String xml) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         DocumentBuilder builder = factory.newDocumentBuilder();
@@ -157,6 +292,11 @@ public class ConversionService {
         return builder.parse(is);
     }
 
+    /**
+     * Парсит один подшаг мока.
+     * @param mockDataElement Элемент mockData.
+     * @return Объект TestStep.
+     */
     private TestStep parseSingleMockSubStep(Element mockDataElement) {
         Element queryElement = (Element) mockDataElement.getElementsByTagName("query").item(0);
         Element responseElement = (Element) mockDataElement.getElementsByTagName("response").item(0);
@@ -179,18 +319,56 @@ public class ConversionService {
                 .build();
     }
 
+    /**
+     * Парсит шаг запроса.
+     * @param mainSteps Список основных шагов.
+     * @param nodes Список узлов.
+     * @param currentIndex Текущий индекс.
+     * @param pendingDateTime Ожидаемая дата и время.
+     * @param pendingRequestData Ожидаемые данные запроса.
+     * @return Следующий индекс.
+     */
     private int parseRequestStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex, String pendingDateTime, String pendingRequestData) {
         return parseGenericStep(mainSteps, nodes, currentIndex, pendingDateTime, pendingRequestData, body -> "Отправить запрос:", true);
     }
 
+    /**
+     * Парсит шаг "q".
+     * @param mainSteps Список основных шагов.
+     * @param nodes Список узлов.
+     * @param currentIndex Текущий индекс.
+     * @param pendingDateTime Ожидаемая дата и время.
+     * @param pendingRequestData Ожидаемые данные запроса.
+     * @return Следующий индекс.
+     */
     private int parseQStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex, String pendingDateTime, String pendingRequestData) {
         return parseGenericStep(mainSteps, nodes, currentIndex, pendingDateTime, pendingRequestData, body -> "Отправить текст в бота:\n" + body, false);
     }
 
+    /**
+     * Парсит шаг события.
+     * @param mainSteps Список основных шагов.
+     * @param nodes Список узлов.
+     * @param currentIndex Текущий индекс.
+     * @param pendingDateTime Ожидаемая дата и время.
+     * @param pendingRequestData Ожидаемые данные запроса.
+     * @return Следующий индекс.
+     */
     private int parseEventStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex, String pendingDateTime, String pendingRequestData) {
         return parseGenericStep(mainSteps, nodes, currentIndex, pendingDateTime, pendingRequestData, body -> "Вызвать ивент:\n" + body, false);
     }
 
+    /**
+     * Парсит общий шаг.
+     * @param mainSteps Список основных шагов.
+     * @param nodes Список узлов.
+     * @param currentIndex Текущий индекс.
+     * @param pendingDateTime Ожидаемая дата и время.
+     * @param pendingRequestData Ожидаемые данные запроса.
+     * @param stepNameFormatter Форматтер имени шага.
+     * @param isRequest Является ли шаг запросом.
+     * @return Следующий индекс.
+     */
     private int parseGenericStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex, String pendingDateTime, String pendingRequestData, Function<String, String> stepNameFormatter, boolean isRequest) {
         Element element = (Element) nodes.item(currentIndex);
         String body = element.getTextContent().trim();
@@ -234,6 +412,13 @@ public class ConversionService {
         return nextIndex - 1;
     }
 
+    /**
+     * Собирает ожидаемые результаты.
+     * @param nodes Список узлов.
+     * @param startIndex Начальный индекс.
+     * @param expectedResultSteps Список шагов с ожидаемыми результатами.
+     * @return Следующий индекс.
+     */
     private int collectExpectedResults(NodeList nodes, int startIndex, List<TestStep> expectedResultSteps) {
         for (int i = startIndex; i < nodes.getLength(); i++) {
             Node node = nodes.item(i);
@@ -267,6 +452,12 @@ public class ConversionService {
         return nodes.getLength();
     }
 
+    /**
+     * Заменяет параметры в URL.
+     * @param urlTemplate Шаблон URL.
+     * @param paramsElement Элемент с параметрами.
+     * @return URL с замененными параметрами.
+     */
     private String replaceParameters(String urlTemplate, Element paramsElement) {
         if (paramsElement == null) return urlTemplate;
         String result = urlTemplate;
@@ -283,6 +474,11 @@ public class ConversionService {
         return result;
     }
 
+    /**
+     * Извлекает имя метода из URL.
+     * @param url URL.
+     * @return Имя метода.
+     */
     private String getMethodNameFromUrl(String url) {
         try {
             Pattern pattern = Pattern.compile(".*/(.*?)(?:\\?.*)?$");

@@ -23,6 +23,9 @@ import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+/**
+ * Контроллер для обработки запросов на конвертацию XML в Allure JSON.
+ */
 @RestController
 @RequestMapping("/api/v1/convert")
 @Tag(name = "XML to Allure ZIP Converter")
@@ -31,11 +34,23 @@ public class ConversionController {
     private final ConversionService conversionService;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
+    /**
+     * Конструктор для внедрения зависимости ConversionService.
+     * @param conversionService Сервис для конвертации.
+     */
     @Autowired
     public ConversionController(ConversionService conversionService) {
         this.conversionService = conversionService;
     }
 
+    /**
+     * Конвертирует XML файл в ZIP-архив с Allure JSON результатами.
+     * @param file XML файл для конвертации.
+     * @param epic Epic для Allure отчета.
+     * @param feature Feature для Allure отчета.
+     * @param story Story для Allure отчета.
+     * @return ResponseEntity с ZIP-архивом или сообщением об ошибке.
+     */
     @Operation(
             summary = "Конвертирует XML файл в ZIP-архив с Allure JSON результатами",
             description = "Принимает XML файл с одним или несколькими тест-кейсами и возвращает ZIP-архив для импорта в Allure TestOps"
@@ -73,6 +88,12 @@ public class ConversionController {
         }
     }
 
+    /**
+     * Создает ZIP-архив из списка тест-кейсов.
+     * @param testCases Список тест-кейсов.
+     * @return Массив байтов с ZIP-архивом.
+     * @throws IOException Если произошла ошибка ввода-вывода.
+     */
     private byte[] createZipArchive(List<TestCase> testCases) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
