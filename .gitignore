@@ -1,0 +1,31 @@
+# Build output
+build/
+.gradle/
+
+# IDE configuration files
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+.vscode/
+
+# Log files
+*.log
+
+# OS-specific files
+.DS_Store
+
+# Temporary files
+*~
+*.tmp
+
+# Compiled files from other tools
+out/
+target/
+
+# Don't ignore the gradle wrapper jar, but ignore other jars
+*.jar
+!gradle/wrapper/gradle-wrapper.jar

@@ -4,6 +4,7 @@ import com.example.xmltoallure.model.Labels;
 import com.example.xmltoallure.model.Parameter;
 import com.example.xmltoallure.model.TestCase;
 import com.example.xmltoallure.model.TestStep;
+import org.apache.commons.text.StringEscapeUtils;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -16,20 +17,115 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.apache.commons.text.StringEscapeUtils;
 
 @Service
 public class ConversionService {
 
-    public TestCase convert(String xmlContent, String fileName, String epic, String feature, String story) throws Exception {
+    public List<TestCase> convert(String xmlContent, String fileName, String epic, String feature, String story) throws Exception {
         Document doc = loadXMLFromString(xmlContent);
         doc.getDocumentElement().normalize();
 
-        Element testCaseElement = (Element) doc.getElementsByTagName("test-case").item(0);
+        List<TestCase> testCases = new ArrayList<>();
+        NodeList testCaseNodes = doc.getElementsByTagName("test-case");
+
+        for (int i = 0; i < testCaseNodes.getLength(); i++) {
+            Node testCaseNode = testCaseNodes.item(i);
+            if (testCaseNode.getNodeType() == Node.ELEMENT_NODE) {
+                Element testCaseElement = (Element) testCaseNode;
+                testCases.add(parseTestCase(testCaseElement, fileName, epic, feature, story));
+            }
+        }
+        return testCases;
+    }
+
+    private TestCase parseTestCase(Element testCaseElement, String fileName, String epic, String feature, String story) {
         String testCaseName = testCaseElement.getAttribute("id");
 
+        // --- Pass 1: Analyze dateTime structure for this specific test case ---
+        int dateTimeCount = 0;
+        int firstDateTimeIndex = -1;
+        int firstRequestIndex = -1;
+        NodeList allNodes = testCaseElement.getChildNodes();
+        for (int i = 0; i < allNodes.getLength(); i++) {
+            Node node = allNodes.item(i);
+            if (node.getNodeType() == Node.ELEMENT_NODE) {
+                String tagName = ((Element) node).getTagName();
+                if ("dateTime".equals(tagName)) {
+                    dateTimeCount++;
+                    if (firstDateTimeIndex == -1) {
+                        firstDateTimeIndex = i;
+                    }
+                }
+                if (firstRequestIndex == -1 && ("request".equals(tagName) || "q".equals(tagName) || "event".equals(tagName))) {
+                    firstRequestIndex = i;
+                }
+            }
+        }
+
+        boolean singleDateTimeAtStart = dateTimeCount == 1 && (firstRequestIndex == -1 || firstDateTimeIndex < firstRequestIndex);
+        String description = "";
+        if (singleDateTimeAtStart) {
+            description = "Установить дату и время\n" + ((Element) allNodes.item(firstDateTimeIndex)).getTextContent().trim();
+        }
+
+        // --- Pass 2: Build TestCase ---
+        List<Labels> labels = createLabels(fileName, epic, feature, story);
+        List<TestStep> steps = new ArrayList<>();
+        String pendingDateTime = null;
+        String pendingRequestData = null;
+
+        for (int i = 0; i < allNodes.getLength(); i++) {
+            Node node = allNodes.item(i);
+            if (node.getNodeType() == Node.ELEMENT_NODE) {
+                Element element = (Element) node;
+                String tagName = element.getTagName();
+
+                if ("dateTime".equals(tagName)) {
+                    if (!singleDateTimeAtStart) {
+                        pendingDateTime = element.getTextContent().trim();
+                    }
+                    continue;
+                }
+                
+                if ("requestData".equals(tagName)) {
+                    pendingRequestData = element.getTextContent().trim();
+                    continue;
+                }
+
+                if ("mockData".equals(tagName)) {
+                    steps.add(parseMockDataStep(element));
+                    pendingDateTime = null;
+                    pendingRequestData = null;
+                } else if ("request".equals(tagName)) {
+                    i = parseRequestStep(steps, allNodes, i, pendingDateTime, null);
+                    pendingDateTime = null;
+                    pendingRequestData = null;
+                } else if ("q".equals(tagName)) {
+                    i = parseQStep(steps, allNodes, i, pendingDateTime, pendingRequestData);
+                    pendingDateTime = null;
+                    pendingRequestData = null;
+                } else if ("event".equals(tagName)) {
+                    i = parseEventStep(steps, allNodes, i, pendingDateTime, pendingRequestData);
+                    pendingDateTime = null;
+                    pendingRequestData = null;
+                }
+            }
+        }
+
+        return TestCase.builder()
+                .name(testCaseName)
+                .fullName(testCaseName)
+                .description(description)
+                .status("passed")
+                .labels(labels)
+                .steps(steps)
+                .build();
+    }
+
+    private List<Labels> createLabels(String fileName, String epic, String feature, String story) {
         List<Labels> labels = new ArrayList<>();
         if (epic != null && !epic.isEmpty()) {
             labels.add(Labels.builder().name("epic").value(epic).build());
@@ -42,31 +138,7 @@ public class ConversionService {
         } else if (fileName != null && !fileName.isEmpty()) {
             labels.add(Labels.builder().name("story").value(fileName.replaceFirst("[.][^.]+$", "")).build());
         }
-
-        List<TestStep> steps = new ArrayList<>();
-        NodeList childNodes = testCaseElement.getChildNodes();
-        for (int i = 0; i < childNodes.getLength(); i++) {
-            Node node = childNodes.item(i);
-            if (node.getNodeType() == Node.ELEMENT_NODE) {
-                Element element = (Element) node;
-                if ("mockData".equals(element.getTagName())) {
-                    steps.add(parseMockDataStep(element));
-                } else if ("request".equals(element.getTagName())) {
-                    i = parseRequestStep(steps, childNodes, i);
-                } else if ("q".equals(element.getTagName())) {
-                    i = parseQStep(steps, childNodes, i);
-                }
-            }
-        }
-
-        return TestCase.builder()
-                .name(testCaseName)
-                .fullName(testCaseName)
-                .description("")
-                .status("passed")
-                .labels(labels)
-                .steps(steps)
-                .build();
+        return labels;
     }
 
     private Document loadXMLFromString(String xml) throws Exception {
@@ -78,8 +150,6 @@ public class ConversionService {
 
     private TestStep parseMockDataStep(Element mockDataElement) {
         List<TestStep> mockSubSteps = new ArrayList<>();
-        NodeList mockNodes = mockDataElement.getChildNodes();
-        
         Element queryElement = (Element) mockDataElement.getElementsByTagName("query").item(0);
         Element responseElement = (Element) mockDataElement.getElementsByTagName("response").item(0);
         Element paramsElement = (Element) mockDataElement.getElementsByTagName("parameters").item(0);
@@ -108,68 +178,58 @@ public class ConversionService {
                 .build();
     }
 
-    private int parseRequestStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex) {
-        Element requestElement = (Element) nodes.item(currentIndex);
-        String requestBody = requestElement.getTextContent().trim();
+    private int parseRequestStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex, String pendingDateTime, String pendingRequestData) {
+        return parseGenericStep(mainSteps, nodes, currentIndex, pendingDateTime, pendingRequestData, body -> "Отправить запрос:", true);
+    }
 
-        TestStep bodySubStep = TestStep.builder()
-                .name(requestBody)
-                .status("passed")
-                .build();
+    private int parseQStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex, String pendingDateTime, String pendingRequestData) {
+        return parseGenericStep(mainSteps, nodes, currentIndex, pendingDateTime, pendingRequestData, body -> "Отправить текст в бота:\n" + body, false);
+    }
 
-        TestStep requestBodyStep = TestStep.builder()
-                .name("Тело запроса:")
-                .status("passed")
-                .steps(List.of(bodySubStep))
-                .build();
+    private int parseEventStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex, String pendingDateTime, String pendingRequestData) {
+        return parseGenericStep(mainSteps, nodes, currentIndex, pendingDateTime, pendingRequestData, body -> "Вызвать ивент:\n" + body, false);
+    }
+
+    private int parseGenericStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex, String pendingDateTime, String pendingRequestData, Function<String, String> stepNameFormatter, boolean isRequest) {
+        Element element = (Element) nodes.item(currentIndex);
+        String body = element.getTextContent().trim();
+
+        List<TestStep> subSteps = new ArrayList<>();
+        List<Parameter> mainParameters = new ArrayList<>();
+
+        if (pendingDateTime != null) {
+            subSteps.add(TestStep.builder().name("Перед шагом установить дату и время\n" + pendingDateTime).status("passed").build());
+            mainParameters.add(Parameter.builder().name("DateTime").value(pendingDateTime).build());
+        }
+        
+        if (pendingRequestData != null) {
+            subSteps.add(TestStep.builder().name("Установить значение\n" + pendingRequestData).status("passed").build());
+            mainParameters.add(Parameter.builder().name("RequestData").value(pendingRequestData).build());
+        }
+
+        if (isRequest) {
+            mainParameters.add(Parameter.builder().name("Body").value(body).build());
+            TestStep bodySubStep = TestStep.builder().name(body).status("passed").build();
+            TestStep requestBodyStep = TestStep.builder().name("Тело запроса:").status("passed").steps(List.of(bodySubStep)).build();
+            subSteps.add(requestBodyStep);
+        }
 
         List<TestStep> expectedResultSteps = new ArrayList<>();
         int nextIndex = collectExpectedResults(nodes, currentIndex + 1, expectedResultSteps);
 
-        TestStep expectedResultStep = TestStep.builder()
-                .name("Expected Result")
-                .steps(expectedResultSteps)
-                .build();
-
-        List<TestStep> subSteps = new ArrayList<>();
-        subSteps.add(requestBodyStep);
         if (!expectedResultSteps.isEmpty()) {
+            TestStep expectedResultStep = TestStep.builder().name("Expected Result").steps(expectedResultSteps).build();
             subSteps.add(expectedResultStep);
         }
 
-        TestStep mainRequestStep = TestStep.builder()
-                .name("Отправить запрос:")
+        TestStep mainStep = TestStep.builder()
+                .name(stepNameFormatter.apply(body))
                 .status("passed")
                 .steps(subSteps)
-                .parameters(List.of(Parameter.builder().name("Body").value(requestBody).build()))
+                .parameters(mainParameters)
                 .build();
 
-        mainSteps.add(mainRequestStep);
-        return nextIndex - 1;
-    }
-
-    private int parseQStep(List<TestStep> mainSteps, NodeList nodes, int currentIndex) {
-        Element qElement = (Element) nodes.item(currentIndex);
-        String qBody = qElement.getTextContent().trim();
-
-        List<TestStep> expectedResultSteps = new ArrayList<>();
-        int nextIndex = collectExpectedResults(nodes, currentIndex + 1, expectedResultSteps);
-        
-        TestStep expectedResultStep = null;
-        if (!expectedResultSteps.isEmpty()) {
-            expectedResultStep = TestStep.builder()
-                .name("Expected Result")
-                .steps(expectedResultSteps)
-                .build();
-        }
-
-        TestStep mainQStep = TestStep.builder()
-                .name("Отправить текст в бота:\n" + qBody)
-                .status("passed")
-                .steps(expectedResultStep != null ? List.of(expectedResultStep) : new ArrayList<>())
-                .build();
-
-        mainSteps.add(mainQStep);
+        mainSteps.add(mainStep);
         return nextIndex - 1;
     }
 
@@ -181,14 +241,24 @@ public class ConversionService {
                 if ("a".equals(element.getTagName())) {
                     String state = element.getAttribute("state");
                     String text = element.getTextContent().trim();
-                    TestStep aStep = TestStep.builder()
-                            .name("state = '" + state + "' " + text)
-                            .build();
+                    TestStep aStep = TestStep.builder().name("state = '" + state + "' " + text).build();
                     expectedResultSteps.add(aStep);
                 } else if ("responseData".equals(element.getTagName())) {
-                    // Logic for responseData as per comments
+                    String field = element.getAttribute("field");
+                    String text = element.getTextContent().trim();
+                    String stepName;
+
+                    if ("replies".equals(field)) {
+                        stepName = "Ожидаемое тело:\n" + text;
+                    } else if (text.isEmpty()) {
+                        stepName = "Ключ " + field + " не равен NULL/существует в ответе";
+                    } else {
+                        stepName = "Элемент тела\n" + field + "\nимеет значение\n" + text;
+                    }
+                    
+                    TestStep responseDataStep = TestStep.builder().name(stepName).build();
+                    expectedResultSteps.add(responseDataStep);
                 } else {
-                    // Found a different tag, stop collecting
                     return i;
                 }
             }
@@ -198,6 +268,7 @@ public class ConversionService {
 
     private String replaceParameters(String urlTemplate, Element paramsElement) {
         if (paramsElement == null) return urlTemplate;
+        String result = urlTemplate;
         NodeList paramNodes = paramsElement.getChildNodes();
         for (int i = 0; i < paramNodes.getLength(); i++) {
             Node node = paramNodes.item(i);
@@ -205,10 +276,10 @@ public class ConversionService {
                 Element param = (Element) node;
                 String key = param.getTagName();
                 String value = param.getTextContent().trim();
-                urlTemplate = urlTemplate.replace("${" + key + "}", value);
+                result = result.replace("${" + key + "}", value);
             }
         }
-        return urlTemplate;
+        return result;
     }
 
     private String getMethodNameFromUrl(String url) {

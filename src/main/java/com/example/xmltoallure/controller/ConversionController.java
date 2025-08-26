@@ -14,11 +14,16 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @RestController
 @RequestMapping("/api/v1/convert")
-@Tag(name = "XML to Allure JSON Converter")
+@Tag(name = "XML to Allure ZIP Converter")
 public class ConversionController {
 
     private final ConversionService conversionService;
@@ -30,11 +35,11 @@ public class ConversionController {
     }
 
     @Operation(
-            summary = "Конвертирует XML файл в Allure JSON формат",
-            description = "Принимает XML файл и параметры для Allure меток, возвращает готовый JSON для скачивания"
+            summary = "Конвертирует XML файл в ZIP-архив с Allure JSON результатами",
+            description = "Принимает XML файл с одним или несколькими тест-кейсами и возвращает ZIP-архив для импорта в Allure TestOps"
     )
-    @PostMapping(value = "/xml-to-allure", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    public ResponseEntity<byte[]> convertXmlToAllure(
+    @PostMapping(value = "/xml-to-allure-zip", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = "application/zip")
+    public ResponseEntity<byte[]> convertXmlToAllureZip(
             @Parameter(description = "XML файл для конвертации") @RequestPart("file") MultipartFile file,
             @Parameter(description = "Epic для Allure отчета") @RequestParam(required = false) String epic,
             @Parameter(description = "Feature для Allure отчета") @RequestParam(required = false) String feature,
@@ -42,28 +47,46 @@ public class ConversionController {
         try {
             String xmlContent = new String(file.getBytes(), StandardCharsets.UTF_8);
             String originalFileName = file.getOriginalFilename();
-            TestCase testCase = conversionService.convert(xmlContent, originalFileName, epic, feature, story);
+            List<TestCase> testCases = conversionService.convert(xmlContent, originalFileName, epic, feature, story);
 
-            String json = gson.toJson(testCase);
-            byte[] jsonBytes = json.getBytes(StandardCharsets.UTF_8);
+            byte[] zipBytes = createZipArchive(testCases);
 
-            String outputFileName = "allure-result.json";
+            String outputFileName = "allure-results.zip";
             if (originalFileName != null && !originalFileName.isEmpty()) {
-                outputFileName = originalFileName.replaceFirst("[.][^.]+$", "") + ".json";
+                outputFileName = originalFileName.replaceFirst("[.][^.]+$", "") + "-result.zip";
             }
 
             HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            headers.setContentType(MediaType.parseMediaType("application/zip"));
             headers.setContentDispositionFormData("attachment", outputFileName);
 
             return ResponseEntity.ok()
                     .headers(headers)
-                    .body(jsonBytes);
+                    .body(zipBytes);
+
         } catch (Exception e) {
             e.printStackTrace();
-            // Return a JSON error response for better client-side handling
             String errorJson = "{\"error\":\"Error during conversion: " + e.getMessage() + "\"}";
             return ResponseEntity.status(500).contentType(MediaType.APPLICATION_JSON).body(errorJson.getBytes(StandardCharsets.UTF_8));
         }
+    }
+
+    private byte[] createZipArchive(List<TestCase> testCases) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            for (TestCase testCase : testCases) {
+                // Sanitize the test case name for use as a filename
+                String sanitizedName = testCase.getName().replaceAll("[^a-zA-Z0-9\\.\\-]", "_");
+                String entryName = sanitizedName + "-result.json";
+                
+                ZipEntry entry = new ZipEntry(entryName);
+                zos.putNextEntry(entry);
+                
+                String json = gson.toJson(testCase);
+                zos.write(json.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+            }
+        }
+        return baos.toByteArray();
     }
 }
