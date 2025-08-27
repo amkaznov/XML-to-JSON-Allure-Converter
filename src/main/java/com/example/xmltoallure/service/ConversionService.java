@@ -12,6 +12,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
+import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
@@ -21,10 +22,7 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-@Service
-public class ConversionService {
-
-    /**
+/**
  * Сервис для конвертации XML в объекты TestCase.
  */
 @Service
@@ -159,102 +157,6 @@ public class ConversionService {
                 .build();
     }
 
-    // ... (rest of the methods remain unchanged)
-}
-
-    private TestCase parseTestCase(Element testCaseElement, String fileName, String epic, String feature, String story) {
-        String testCaseName = testCaseElement.getAttribute("id");
-
-        // --- Pass 1: Analyze dateTime structure for this specific test case ---
-        int dateTimeCount = 0;
-        int firstDateTimeIndex = -1;
-        int firstRequestIndex = -1;
-        NodeList allNodes = testCaseElement.getChildNodes();
-        for (int i = 0; i < allNodes.getLength(); i++) {
-            Node node = allNodes.item(i);
-            if (node.getNodeType() == Node.ELEMENT_NODE) {
-                String tagName = ((Element) node).getTagName();
-                if ("dateTime".equals(tagName)) {
-                    dateTimeCount++;
-                    if (firstDateTimeIndex == -1) {
-                        firstDateTimeIndex = i;
-                    }
-                }
-                if (firstRequestIndex == -1 && ("request".equals(tagName) || "q".equals(tagName) || "event".equals(tagName))) {
-                    firstRequestIndex = i;
-                }
-            }
-        }
-
-        boolean singleDateTimeAtStart = dateTimeCount == 1 && (firstRequestIndex == -1 || firstDateTimeIndex < firstRequestIndex);
-        String description = "";
-        if (singleDateTimeAtStart) {
-            description = "Установить дату и время\n" + ((Element) allNodes.item(firstDateTimeIndex)).getTextContent().trim();
-        }
-
-        // --- Pass 2: Build TestCase ---
-        List<Labels> labels = createLabels(fileName, epic, feature, story);
-        List<TestStep> regularSteps = new ArrayList<>();
-        List<TestStep> mockSubSteps = new ArrayList<>();
-        String pendingDateTime = null;
-        String pendingRequestData = null;
-
-        for (int i = 0; i < allNodes.getLength(); i++) {
-            Node node = allNodes.item(i);
-            if (node.getNodeType() == Node.ELEMENT_NODE) {
-                Element element = (Element) node;
-                String tagName = element.getTagName();
-
-                if ("dateTime".equals(tagName)) {
-                    if (!singleDateTimeAtStart) {
-                        pendingDateTime = element.getTextContent().trim();
-                    }
-                    continue;
-                }
-                
-                if ("requestData".equals(tagName)) {
-                    pendingRequestData = element.getTextContent().trim();
-                    continue;
-                }
-
-                if ("mockData".equals(tagName)) {
-                    mockSubSteps.add(parseSingleMockSubStep(element));
-                } else if ("request".equals(tagName)) {
-                    i = parseRequestStep(regularSteps, allNodes, i, pendingDateTime, null);
-                    pendingDateTime = null;
-                    pendingRequestData = null;
-                } else if ("q".equals(tagName)) {
-                    i = parseQStep(regularSteps, allNodes, i, pendingDateTime, pendingRequestData);
-                    pendingDateTime = null;
-                    pendingRequestData = null;
-                } else if ("event".equals(tagName)) {
-                    i = parseEventStep(regularSteps, allNodes, i, pendingDateTime, pendingRequestData);
-                    pendingDateTime = null;
-                    pendingRequestData = null;
-                }
-            }
-        }
-
-        List<TestStep> finalSteps = new ArrayList<>();
-        if (!mockSubSteps.isEmpty()) {
-            finalSteps.add(TestStep.builder()
-                .name("Создать моки")
-                .status("passed")
-                .steps(mockSubSteps)
-                .build());
-        }
-        finalSteps.addAll(regularSteps);
-
-        return TestCase.builder()
-                .name(testCaseName)
-                .fullName(testCaseName)
-                .description(description)
-                .status("passed")
-                .labels(labels)
-                .steps(finalSteps)
-                .build();
-    }
-
     /**
      * Создает список меток для Allure отчета.
      * @param fileName Имя файла.
@@ -280,7 +182,7 @@ public class ConversionService {
     }
 
     /**
-     * Загружает XML из строки.
+     * Загружает XML из строки с защитой от XXE-атак.
      * @param xml Строка с XML.
      * @return Объект Document.
      * @throws Exception Если произошла ошибка при парсинге.
