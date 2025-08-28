@@ -62,7 +62,7 @@ public class ConversionController {
     @PostMapping(value = "/xml-to-allure-zip", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = "application/zip")
     public ResponseEntity<byte[]> convertXmlToAllureZip(
             @Parameter(description = "Один или несколько XML файлов и/или ZIP-архивов для конвертации") @RequestPart("files") List<MultipartFile> files,
-            @Parameter(description = "Epic для Allure отчета") @RequestParam(required = false) String epic,
+            @Parameter(description = "Epic для Allure отчета. По умолчанию 'JAICP'.") @RequestParam(defaultValue = "JAICP") String epic,
             @Parameter(description = "Feature для Allure отчета") @RequestParam(required = false) String feature,
             @Parameter(description = "Story для Allure отчета (если не указано, используется имя файла)") @RequestParam(required = false) String story) {
         
