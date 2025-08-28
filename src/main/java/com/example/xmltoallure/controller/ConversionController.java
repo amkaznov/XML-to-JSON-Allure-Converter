@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -72,7 +73,7 @@ public class ConversionController {
                 String originalFileName = file.getOriginalFilename();
                 if (originalFileName != null && originalFileName.toLowerCase().endsWith(".zip")) {
                     processZipFile(file, allTestCases, epic, feature, story);
-                } else {
+                } else if (originalFileName != null && originalFileName.toLowerCase().endsWith(".xml")) {
                     processXmlFile(file, allTestCases, epic, feature, story);
                 }
             }
@@ -113,7 +114,8 @@ public class ConversionController {
                     }
                     String xmlContent = baos.toString(StandardCharsets.UTF_8.name());
                     try {
-                        allTestCases.addAll(conversionService.convert(xmlContent, zipEntry.getName(), epic, feature, story));
+                        String fileNameOnly = new File(zipEntry.getName()).getName();
+                        allTestCases.addAll(conversionService.convert(xmlContent, fileNameOnly, epic, feature, story));
                     } catch (Exception e) {
                         System.err.println("Failed to convert file in zip: " + zipEntry.getName() + " - " + e.getMessage());
                     }
