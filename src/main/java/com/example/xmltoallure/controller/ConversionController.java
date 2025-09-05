@@ -53,6 +53,7 @@ public class ConversionController {
      * @param epic Epic для Allure отчета.
      * @param feature Feature для Allure отчета.
      * @param story Story для Allure отчета.
+     * @param owner Владелец тест-кейса.
      * @return ResponseEntity с ZIP-архивом или сообщением об ошибке.
      */
     @Operation(
@@ -64,17 +65,18 @@ public class ConversionController {
             @Parameter(description = "Один или несколько XML файлов и/или ZIP-архивов для конвертации") @RequestPart("files") List<MultipartFile> files,
             @Parameter(description = "Epic для Allure отчета. По умолчанию 'JAICP'.") @RequestParam(defaultValue = "JAICP") String epic,
             @Parameter(description = "Feature для Allure отчета") @RequestParam(required = false) String feature,
-            @Parameter(description = "Story для Allure отчета (если не указано, используется имя файла)") @RequestParam(required = false) String story) {
-        
+            @Parameter(description = "Story для Allure отчета (если не указано, используется имя файла)") @RequestParam(required = false) String story,
+            @Parameter(description = "Owner - u_логин владельца") @RequestParam(required = false) String owner) {
+
         List<TestCase> allTestCases = new ArrayList<>();
 
         try {
             for (MultipartFile file : files) {
                 String originalFileName = file.getOriginalFilename();
                 if (originalFileName != null && originalFileName.toLowerCase().endsWith(".zip")) {
-                    processZipFile(file, allTestCases, epic, feature, story);
+                    processZipFile(file, allTestCases, epic, feature, story, owner);
                 } else if (originalFileName != null && originalFileName.toLowerCase().endsWith(".xml")) {
-                    processXmlFile(file, allTestCases, epic, feature, story);
+                    processXmlFile(file, allTestCases, epic, feature, story, owner);
                 }
             }
 
@@ -96,12 +98,12 @@ public class ConversionController {
         }
     }
 
-    private void processXmlFile(MultipartFile file, List<TestCase> allTestCases, String epic, String feature, String story) throws Exception {
+    private void processXmlFile(MultipartFile file, List<TestCase> allTestCases, String epic, String feature, String story, String owner) throws Exception {
         String xmlContent = new String(file.getBytes(), StandardCharsets.UTF_8);
-        allTestCases.addAll(conversionService.convert(xmlContent, file.getOriginalFilename(), epic, feature, story));
+        allTestCases.addAll(conversionService.convert(xmlContent, file.getOriginalFilename(), epic, feature, story, owner));
     }
 
-    private void processZipFile(MultipartFile file, List<TestCase> allTestCases, String epic, String feature, String story) throws IOException {
+    private void processZipFile(MultipartFile file, List<TestCase> allTestCases, String epic, String feature, String story, String owner) throws IOException {
         try (InputStream is = file.getInputStream(); ZipInputStream zis = new ZipInputStream(is)) {
             ZipEntry zipEntry;
             while ((zipEntry = zis.getNextEntry()) != null) {
@@ -115,7 +117,7 @@ public class ConversionController {
                     String xmlContent = baos.toString(StandardCharsets.UTF_8.name());
                     try {
                         String fileNameOnly = new File(zipEntry.getName()).getName();
-                        allTestCases.addAll(conversionService.convert(xmlContent, fileNameOnly, epic, feature, story));
+                        allTestCases.addAll(conversionService.convert(xmlContent, fileNameOnly, epic, feature, story, owner));
                     } catch (Exception e) {
                         System.err.println("Failed to convert file in zip: " + zipEntry.getName() + " - " + e.getMessage());
                     }

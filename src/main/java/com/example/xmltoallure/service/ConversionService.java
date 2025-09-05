@@ -35,10 +35,11 @@ public class ConversionService {
      * @param epic Epic для Allure отчета.
      * @param feature Feature для Allure отчета.
      * @param story Story для Allure отчета.
+     * @param owner Владелец тест-кейса.
      * @return Список объектов TestCase.
      * @throws Exception Если произошла ошибка при парсинге XML.
      */
-    public List<TestCase> convert(String xmlContent, String fileName, String epic, String feature, String story) throws Exception {
+    public List<TestCase> convert(String xmlContent, String fileName, String epic, String feature, String story, String owner) throws Exception {
         Document doc = loadXMLFromString(xmlContent);
         doc.getDocumentElement().normalize();
 
@@ -49,7 +50,7 @@ public class ConversionService {
             Node testCaseNode = testCaseNodes.item(i);
             if (testCaseNode.getNodeType() == Node.ELEMENT_NODE) {
                 Element testCaseElement = (Element) testCaseNode;
-                testCases.add(parseTestCase(testCaseElement, fileName, epic, feature, story));
+                testCases.add(parseTestCase(testCaseElement, fileName, epic, feature, story, owner));
             }
         }
         return testCases;
@@ -62,9 +63,10 @@ public class ConversionService {
      * @param epic Epic для Allure отчета.
      * @param feature Feature для Allure отчета.
      * @param story Story для Allure отчета.
+     * @param owner Владелец тест-кейса.
      * @return Объект TestCase.
      */
-    private TestCase parseTestCase(Element testCaseElement, String fileName, String epic, String feature, String story) {
+    private TestCase parseTestCase(Element testCaseElement, String fileName, String epic, String feature, String story, String owner) {
         String testCaseName = testCaseElement.getAttribute("id");
 
         // --- Pass 1: Analyze dateTime structure for this specific test case ---
@@ -95,7 +97,7 @@ public class ConversionService {
         }
 
         // --- Pass 2: Build TestCase ---
-        List<Labels> labels = createLabels(fileName, epic, feature, story);
+        List<Labels> labels = createLabels(fileName, epic, feature, story, owner);
         List<TestStep> regularSteps = new ArrayList<>();
         List<TestStep> mockSubSteps = new ArrayList<>();
         String pendingDateTime = null;
@@ -163,9 +165,10 @@ public class ConversionService {
      * @param epic Epic для Allure отчета.
      * @param feature Feature для Allure отчета.
      * @param story Story для Allure отчета.
+     * @param owner Владелец тест-кейса.
      * @return Список меток.
      */
-    private List<Labels> createLabels(String fileName, String epic, String feature, String story) {
+    private List<Labels> createLabels(String fileName, String epic, String feature, String story, String owner) {
         List<Labels> labels = new ArrayList<>();
         if (epic != null && !epic.isEmpty()) {
             labels.add(Labels.builder().name("epic").value(epic).build());
@@ -177,6 +180,9 @@ public class ConversionService {
             labels.add(Labels.builder().name("story").value(story).build());
         } else if (fileName != null && !fileName.isEmpty()) {
             labels.add(Labels.builder().name("story").value(fileName.replaceFirst("[.][^.]+$", "")).build());
+        }
+        if (owner != null && !owner.isEmpty()) {
+            labels.add(Labels.builder().name("owner").value(owner).build());
         }
         return labels;
     }
